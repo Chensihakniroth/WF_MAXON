@@ -1,0 +1,2 @@
+# Keep line endings as-is (Windows project; avoid LF<->CRLF churn)
+* -text

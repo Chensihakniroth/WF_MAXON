@@ -1,0 +1,194 @@
+{
+  "binary": {
+    "image_base": "0x140000000",
+    "machine": "0x8664",
+    "path": "D:\\SteamLibrary\\steamapps\\common\\Warframe\\Warframe.x64.exe",
+    "pe_timestamp": 1792689187,
+    "pe_timestamp_hex": "0x6ada4423",
+    "pe_timestamp_utc": "2026-10-22T17:13:07+00:00",
+    "sha256": "eec0dbd7078cd6e1f2402fc953ec2741e87a6fb2658ec288be195aac75a1e76d",
+    "sha256_short": "eec0dbd7078cd6e1",
+    "size": 45521792,
+    "size_of_image": 47026176,
+    "size_of_image_hex": "0x2cd9000"
+  },
+  "generated": "2026-10-26T08:39:24",
+  "header_replaced": true,
+  "required_failures": [],
+  "schema_version": 1,
+  "signature_database": {
+    "path": "D:\\game\\warframe_menu\\WF_MAXON\\tools\\offset_signatures.json",
+    "sha256": "d1d142c51c50046ff8e33e28e44bf663a5238e87acb6d59d622577e6993063d8"
+  },
+  "signatures": [
+    {
+      "branch_target_rva": 0,
+      "candidates": [
+        {
+          "file_offset": "0xea4b90",
+          "patch_bytes_hex": "48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 30 48 8b 81 f8 00 00 00",
+          "rva": "0xea5790",
+          "section": ".text",
+          "target_adjust": 0,
+          "target_file_offset": "0xea4b90",
+          "target_valid": true
+        }
+      ],
+      "hits": 1,
+      "name": "fire_weapon_rmi",
+      "notes": "Weapon fire telemetry entry. The final object-field displacement is fixed at +0x1F8 to discriminate this entry; the generated header records the exact current prologue.",
+      "patch_bytes_hex": "48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 30 48 8b 81 f8 00 00 00",
+      "patch_length": 22,
+      "pattern": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 30 48 8B 81 F8 00 00 00",
+      "required": true,
+      "rva": 15357840,
+      "status": "resolved_unique",
+      "target_adjust": 0
+    },
+    {
+      "branch_target_rva": 0,
+      "candidates": [
+        {
+          "file_offset": "0x5e3bf0",
+          "patch_bytes_hex": "8d 42 e8 4c 8b d1 3c 01 76 3a 8d 42",
+          "rva": "0x5e47f0",
+          "section": ".text",
+          "target_adjust": 0,
+          "target_file_offset": "0x5e3bf0",
+          "target_valid": true
+        }
+      ],
+      "hits": 1,
+      "name": "weapon_amount",
+      "notes": "WeaponEx amount classifier telemetry entry.",
+      "patch_bytes_hex": "8d 42 e8 4c 8b d1 3c 01 76 3a 8d 42",
+      "patch_length": 12,
+      "pattern": "8D 42 E8 4C 8B D1 3C 01 76 ?? 8D 42 E6 3C 01 76 ?? 8D 42 E4 3C 01 76 ?? 80 FA 11 75",
+      "required": true,
+      "rva": 6178800,
+      "status": "resolved_unique",
+      "target_adjust": 0
+    },
+    {
+      "branch_target_rva": 23587276,
+      "candidates": [
+        {
+          "file_offset": "0x167dd75",
+          "patch_bytes_hex": "f3 0f 2c c9 81 f9 00 00 00 80 74 1e",
+          "rva": "0x167e9a2",
+          "section": ".text",
+          "target_adjust": 45,
+          "target_file_offset": "0x167dda2",
+          "target_valid": true
+        }
+      ],
+      "hits": 1,
+      "name": "damage_result",
+      "notes": "Current-build damage result point: the unique clamp sequence is anchored to the RDX-backed damage path; the hook target is cvttss2si ecx,xmm1 immediately before integer accumulation.",
+      "patch_bytes_hex": "f3 0f 2c c9 81 f9 00 00 00 80 74 1e",
+      "patch_length": 12,
+      "pattern": "F3 0F 10 8A 88 00 00 00 F3 0F 5F CA EB ?? 0F 28 CA F3 0F 59 CB F3 0F 58 0D ?? ?? ?? ??",
+      "required": true,
+      "rva": 23587234,
+      "status": "resolved_unique",
+      "target_adjust": 45
+    },
+    {
+      "branch_target_rva": 0,
+      "candidates": [
+        {
+          "file_offset": "0x167dca0",
+          "patch_bytes_hex": "0f 10 42 10 44 0f b6 82 90 00 00 00",
+          "rva": "0x167e8a0",
+          "section": ".text",
+          "target_adjust": 0,
+          "target_file_offset": "0x167dca0",
+          "target_valid": true
+        }
+      ],
+      "hits": 1,
+      "name": "damage_accumulate",
+      "notes": "Damage accumulator telemetry entry.",
+      "patch_bytes_hex": "0f 10 42 10 44 0f b6 82 90 00 00 00",
+      "patch_length": 12,
+      "pattern": "0F 10 42 10 44 0F B6 82 ?? ?? ?? ?? 4C 8B C9 0F 10 4A 20 0F 58 C8 0F 10 42 30 0F 58",
+      "required": true,
+      "rva": 23586976,
+      "status": "resolved_unique",
+      "target_adjust": 0
+    },
+    {
+      "branch_target_rva": 0,
+      "candidates": [
+        {
+          "file_offset": "0x137c570",
+          "patch_bytes_hex": "48 83 ec 48 0f 29 74 24 30 0f 28 f1",
+          "rva": "0x137d170",
+          "section": ".text",
+          "target_adjust": 0,
+          "target_file_offset": "0x137c570",
+          "target_valid": true
+        }
+      ],
+      "hits": 1,
+      "name": "fov_setter",
+      "notes": "Camera base-FOV setter. The compare displacement is wildcarded; the store to camera +0x918 is the semantic discriminator.",
+      "patch_bytes_hex": "48 83 ec 48 0f 29 74 24 30 0f 28 f1",
+      "patch_length": 12,
+      "pattern": "48 83 EC 48 0F 29 74 24 30 0F 28 F1 0F 2F 35 ?? ?? ?? ?? F3 0F 11 B1 18 09 00 00",
+      "required": true,
+      "rva": 20435312,
+      "status": "resolved_unique",
+      "target_adjust": 0
+    },
+    {
+      "branch_target_rva": 0,
+      "candidates": [
+        {
+          "file_offset": "0x1436e00",
+          "patch_bytes_hex": "f3 0f 10 81 18 09 00 00 c3 cc cc cc",
+          "rva": "0x1437a00",
+          "section": ".text",
+          "target_adjust": 0,
+          "target_file_offset": "0x1436e00",
+          "target_valid": true
+        }
+      ],
+      "hits": 1,
+      "name": "fov_getter",
+      "notes": "Camera base-FOV getter.",
+      "patch_bytes_hex": "f3 0f 10 81 18 09 00 00 c3 cc cc cc",
+      "patch_length": 12,
+      "pattern": "F3 0F 10 81 18 09 00 00 C3",
+      "required": true,
+      "rva": 21199360,
+      "status": "resolved_unique",
+      "target_adjust": 0
+    },
+    {
+      "branch_target_rva": 0,
+      "candidates": [
+        {
+          "file_offset": "0x6c7160",
+          "patch_bytes_hex": "f3 0f 10 81 58 09 00 00 c3 cc cc cc",
+          "rva": "0x6c7d60",
+          "section": ".text",
+          "target_adjust": 0,
+          "target_file_offset": "0x6c7160",
+          "target_valid": true
+        }
+      ],
+      "hits": 1,
+      "name": "fov_view_getter",
+      "notes": "Renderer-facing view-FOV getter.",
+      "patch_bytes_hex": "f3 0f 10 81 58 09 00 00 c3 cc cc cc",
+      "patch_length": 12,
+      "pattern": "F3 0F 10 81 58 09 00 00 C3",
+      "required": true,
+      "rva": 7109984,
+      "status": "resolved_unique",
+      "target_adjust": 0
+    }
+  ],
+  "tool_version": "1.0.0"
+}

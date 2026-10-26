@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "comment": "Patch-resilient code anchors for WF_MAXON. A unique hit is required before a generated RVA is emitted. Optional entries remain unresolved instead of guessing.",
+  "signatures": [
+    {
+      "name": "fire_weapon_rmi",
+      "pattern": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 30 48 8B 81 F8 00 00 00",
+      "sections": [".text"],
+      "patch_length": 22,
+      "required": true,
+      "notes": "Weapon fire telemetry entry. The final object-field displacement is fixed at +0x1F8 to discriminate this entry; the generated header records the exact current prologue."
+    },
+    {
+      "name": "weapon_amount",
+      "pattern": "8D 42 E8 4C 8B D1 3C 01 76 ?? 8D 42 E6 3C 01 76 ?? 8D 42 E4 3C 01 76 ?? 80 FA 11 75",
+      "sections": [".text"],
+      "patch_length": 12,
+      "required": true,
+      "notes": "WeaponEx amount classifier telemetry entry."
+    },
+    {
+      "name": "damage_result",
+      "pattern": "F3 0F 10 8A 88 00 00 00 F3 0F 5F CA EB ?? 0F 28 CA F3 0F 59 CB F3 0F 58 0D ?? ?? ?? ??",
+      "target_adjust": "0x2D",
+      "sections": [".text"],
+      "patch_length": 12,
+      "required": true,
+      "branch_target_from_patch": {"offset": 10, "kind": "rel8"},
+      "notes": "Current-build damage result point: the unique clamp sequence is anchored to the RDX-backed damage path; the hook target is cvttss2si ecx,xmm1 immediately before integer accumulation."
+    },
+    {
+      "name": "damage_accumulate",
+      "pattern": "0F 10 42 10 44 0F B6 82 ?? ?? ?? ?? 4C 8B C9 0F 10 4A 20 0F 58 C8 0F 10 42 30 0F 58",
+      "sections": [".text"],
+      "patch_length": 12,
+      "required": true,
+      "notes": "Damage accumulator telemetry entry."
+    },
+    {
+      "name": "fov_setter",
+      "pattern": "48 83 EC 48 0F 29 74 24 30 0F 28 F1 0F 2F 35 ?? ?? ?? ?? F3 0F 11 B1 18 09 00 00",
+      "sections": [".text"],
+      "patch_length": 12,
+      "required": true,
+      "notes": "Camera base-FOV setter. The compare displacement is wildcarded; the store to camera +0x918 is the semantic discriminator."
+    },
+    {
+      "name": "fov_getter",
+      "pattern": "F3 0F 10 81 18 09 00 00 C3",
+      "sections": [".text"],
+      "patch_length": 12,
+      "required": true,
+      "notes": "Camera base-FOV getter."
+    },
+    {
+      "name": "fov_view_getter",
+      "pattern": "F3 0F 10 81 58 09 00 00 C3",
+      "sections": [".text"],
+      "patch_length": 12,
+      "required": true,
+      "notes": "Renderer-facing view-FOV getter."
+    }
+  ]
+}

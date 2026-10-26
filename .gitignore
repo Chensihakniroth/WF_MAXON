@@ -1,0 +1,42 @@
+# WF_MAXON repository ignore rules
+# (decided: keep source, scripts, tests, tools, vendored third_party;
+#  ignore build outputs, logs, caches, IDE/OS junk, and generated offset reports)
+
+# ---- Build outputs ----
+build/
+buildobj/
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.res
+
+# ---- Logs / generated reports (keep only the latest offset report) ----
+*.log
+nul
+offsets/wf_maxon_offsets_*.json
+!offsets/wf_maxon_offsets_latest.json
+
+# ---- Python caches ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ---- IDE / editor ----
+.vs/
+.vscode/
+*.suo
+*.user
+*.sdf
+*.opensdf
+*.VC.db
+
+# ---- OS junk ----
+Thumbs.db
+.DS_Store
+desktop.ini
