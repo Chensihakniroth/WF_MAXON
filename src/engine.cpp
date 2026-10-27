@@ -1472,7 +1472,7 @@ bool LiveEngine::ResolvePlayerBase() {
 }
 
 bool LiveEngine::ReadBytes(uintptr_t addr, void* out_buf, size_t n) {
-    if (!warframe_pid_) return false;
+    if (!warframe_pid_ || !addr || !out_buf || n == 0) return false;
     HANDLE proc = (warframe_pid_ == GetCurrentProcessId())
         ? GetCurrentProcess()
         : OpenProcess(PROCESS_VM_READ, FALSE, warframe_pid_);
@@ -1484,7 +1484,7 @@ bool LiveEngine::ReadBytes(uintptr_t addr, void* out_buf, size_t n) {
 }
 
 bool LiveEngine::WriteBytes(uintptr_t addr, const void* in_buf, size_t n) {
-    if (!warframe_pid_) return false;
+    if (!warframe_pid_ || !addr || !in_buf || n == 0) return false;
     HANDLE proc = (warframe_pid_ == GetCurrentProcessId())
         ? GetCurrentProcess()
         : OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION, FALSE, warframe_pid_);
@@ -1561,9 +1561,10 @@ bool LiveEngine::ApplyNumeric(const LiveNumeric& numeric) {
 }
 
 bool LiveEngine::ApplyAll() {
-    if (!warframe_pid_ || !warframe_base_) {
-        DetectGame();
-    }
+    // Always re-resolve: PID and base stay stable across Orbiter->Mission,
+    // but the avatar object changes. Without this the anchor freezes at
+    // whatever state DetectGame() first saw it in.
+    DetectGame();
 
     bool fov_enabled = false;
     float fov_degrees = 90.0f;

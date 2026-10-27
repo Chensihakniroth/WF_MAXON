@@ -60,43 +60,7 @@ ScriptHookStub PROC
 
     lea     r10, [rsp+40h]
     cmp     byte ptr [r10+180h], 0
-    je      ScriptHookRunOriginal
-
-    ; skip=true: restore state and return to caller.
-    mov     qword ptr [rsp+28h], 0
-    mov     rcx, qword ptr [r10+00h]
-    mov     rdx, qword ptr [r10+08h]
-    mov     r8,  qword ptr [r10+10h]
-    mov     r9,  qword ptr [r10+18h]
-    mov     rax, qword ptr [r10+20h]
-    mov     r11, qword ptr [r10+30h]
-    mov     rbx, qword ptr [r10+38h]
-    mov     rbp, qword ptr [r10+40h]
-    mov     rdi, qword ptr [r10+48h]
-    mov     rsi, qword ptr [r10+50h]
-    mov     r12, qword ptr [r10+58h]
-    mov     r13, qword ptr [r10+60h]
-    mov     r14, qword ptr [r10+68h]
-    mov     r15, qword ptr [r10+70h]
-    movdqu  xmm0, xmmword ptr [r10+80h]
-    movdqu  xmm1, xmmword ptr [r10+90h]
-    movdqu  xmm2, xmmword ptr [r10+0A0h]
-    movdqu  xmm3, xmmword ptr [r10+0B0h]
-    movdqu  xmm4, xmmword ptr [r10+0C0h]
-    movdqu  xmm5, xmmword ptr [r10+0D0h]
-    movdqu  xmm6, xmmword ptr [r10+0E0h]
-    movdqu  xmm7, xmmword ptr [r10+0F0h]
-    movdqu  xmm8, xmmword ptr [r10+100h]
-    movdqu  xmm9, xmmword ptr [r10+110h]
-    movdqu  xmm10, xmmword ptr [r10+120h]
-    movdqu  xmm11, xmmword ptr [r10+130h]
-    movdqu  xmm12, xmmword ptr [r10+140h]
-    movdqu  xmm13, xmmword ptr [r10+150h]
-    movdqu  xmm14, xmmword ptr [r10+160h]
-    movdqu  xmm15, xmmword ptr [r10+170h]
-    mov     r10, qword ptr [r10+28h]
-    mov     rsp, qword ptr [rsp+20h]
-    ret
+    jne     ScriptHookSkipOriginal
 
 ScriptHookRunOriginal:
     ; Jump through trampoline to continue original code.
@@ -139,6 +103,45 @@ ScriptHookRunOriginal:
     mov     r10, qword ptr [r10+28h]
     mov     rsp, qword ptr [rsp+20h]
     sub     rsp, 8
+    ret
+
+ScriptHookSkipOriginal:
+    ; skip=true: restore registers, restore original stack pointer, and return to caller!
+    mov     rcx, qword ptr [r10+78h]
+    mov     qword ptr [rsp+20h], rcx
+
+    mov     rcx, qword ptr [r10+00h]
+    mov     rdx, qword ptr [r10+08h]
+    mov     r8,  qword ptr [r10+10h]
+    mov     r9,  qword ptr [r10+18h]
+    mov     rax, qword ptr [r10+20h]
+    mov     r11, qword ptr [r10+30h]
+    mov     rbx, qword ptr [r10+38h]
+    mov     rbp, qword ptr [r10+40h]
+    mov     rdi, qword ptr [r10+48h]
+    mov     rsi, qword ptr [r10+50h]
+    mov     r12, qword ptr [r10+58h]
+    mov     r13, qword ptr [r10+60h]
+    mov     r14, qword ptr [r10+68h]
+    mov     r15, qword ptr [r10+70h]
+    movdqu  xmm0, xmmword ptr [r10+80h]
+    movdqu  xmm1, xmmword ptr [r10+90h]
+    movdqu  xmm2, xmmword ptr [r10+0A0h]
+    movdqu  xmm3, xmmword ptr [r10+0B0h]
+    movdqu  xmm4, xmmword ptr [r10+0C0h]
+    movdqu  xmm5, xmmword ptr [r10+0D0h]
+    movdqu  xmm6, xmmword ptr [r10+0E0h]
+    movdqu  xmm7, xmmword ptr [r10+0F0h]
+    movdqu  xmm8, xmmword ptr [r10+100h]
+    movdqu  xmm9, xmmword ptr [r10+110h]
+    movdqu  xmm10, xmmword ptr [r10+120h]
+    movdqu  xmm11, xmmword ptr [r10+130h]
+    movdqu  xmm12, xmmword ptr [r10+140h]
+    movdqu  xmm13, xmmword ptr [r10+150h]
+    movdqu  xmm14, xmmword ptr [r10+160h]
+    movdqu  xmm15, xmmword ptr [r10+170h]
+    mov     r10, qword ptr [r10+28h]
+    mov     rsp, qword ptr [rsp+20h]
     ret
 ScriptHookStub ENDP
 

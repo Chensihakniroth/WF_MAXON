@@ -1,7 +1,4 @@
 # WF_MAXON
-
-A compact native Windows payload and loader for Warframe. One DLL, one loader, one folder.
-
 ## Architecture
 
 ```text
@@ -37,21 +34,12 @@ WF_MAXONLoader.exe
 | `test_host.exe` | native DLL smoke host used by the build |
 | `wf_maxon_selftest.log` | self-test report |
 
-`OwHelper.dll` and `OwHelperEngine.dll` are **not** part of WF_MAXON. The proven engine's hook logic is replicated inside `WF_MAXON.dll`. The Warframe directory is left as-is.
-
-## Why a from-scratch loader instead of cloning OwHelperLoader.exe?
-
-The proven `final release\OwHelperLoader.exe` is a closed-source, signed binary that hard-codes the payload name `OwHelper.dll`. It also fetches dependencies over `WININET` (dbghelp, symsrv). WF_MAXON ships its own loader so:
 
 - The payload filename is `WF_MAXON.dll`, not `OwHelper.dll`.
 - The loader is open-source and rebuildable.
 - It only knows the two file names it needs: `WF_MAXONLoader.exe` and `WF_MAXON.dll`.
 
 The loader's approach — `OpenProcess` + `VirtualAllocEx` + section copy + remote `Bootstrap` thread — is the same shape as the proven loader. It is not a byte-for-byte copy.
-
-## Why one DLL instead of three?
-
-Splitting UI and engine into two DLLs only makes sense when the engine is a black box that the UI does not own. Here, the entire feature set lives in one process, the offsets are stable, and the UI needs direct access to the same memory the engine reads. A single payload keeps the surface small and removes the second loading step.
 
 ## Included controls (23 + 3 sliders)
 

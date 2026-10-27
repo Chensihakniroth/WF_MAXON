@@ -26,6 +26,8 @@
 #include "lua/lualib.h"
 #include "lua/lauxlib.h"
 
+#include <tlhelp32.h>
+
 namespace wfmaxon {
 namespace {
 
@@ -72,8 +74,7 @@ std::wstring Utf8ToWide(const std::string& s) {
 // ---------------------------------------------------------------------------
 void HookInstructionCountHook(lua_State* L, lua_Debug* ar) {
     (void)ar;
-    lua_pushliteral(L, "WF_MAXON hook instruction limit exceeded");
-    lua_error(L);
+    luaL_error(L, "WF_MAXON hook instruction limit exceeded");
 }
 
 // ---------------------------------------------------------------------------
@@ -247,10 +248,192 @@ int wf_on_unload(lua_State* L) {
 }
 
 int wf_find_pattern(lua_State* L) {
-    // Stub: pattern scanning requires module enumeration.
-    // For now, return nil and log.
+    // wf.find_pattern(module_base, pattern) -> address or nil
+    // pattern: hex string like "48 89 5C 24 ?? 48 89 6C 24"
+    //   '??' = wildcard byte, ' ' = separator
+    auto* self = g_script_engine;
+    if (!self || !lua_isinteger(L, 1) || !lua_isstring(L, 2)) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "find_pattern: expected (integer module_base, string pattern)");
+        return 2;
+    }
+
+    uintptr_t module_base = static_cast<uintptr_t>(lua_tointeger(L, 1));
+    const char* pat_str = lua_tostring(L, 2);
+
+    if (!module_base) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "find_pattern: module_base is 0");
+        return 2;
+    }
+
+    // Parse pattern into bytes + wildcard flags
+    std::vector<uint8_t> pat_bytes;
+    std::vector<bool> pat_wild;
+    const char* p = pat_str;
+    while (*p) {
+        if (*p == ' ') { ++p; continue; }
+        if (*p == '?' && p[1] == '?') {
+            pat_bytes.push_back(0);
+            pat_wild.push_back(true);
+            p += 2;
+            continue;
+        }
+        auto hex_val = [](char c) -> uint8_t {
+            if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+            if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(c - 'A' + 10);
+            if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+            return 255;
+        };
+        uint8_t hi = hex_val(p[0]);
+        uint8_t lo = hex_val(p[1]);
+        if (hi == 255 || lo == 255) {
+            lua_pushnil(L);
+            lua_pushliteral(L, "find_pattern: invalid pattern hex");
+            return 2;
+        }
+        pat_bytes.push_back(static_cast<uint8_t>((hi << 4) | lo));
+        pat_wild.push_back(false);
+        p += 2;
+    }
+    size_t plen = pat_bytes.size();
+    if (plen == 0) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "find_pattern: empty pattern");
+        return 2;
+    }
+
+    // Determine module size from PE headers
+    uintptr_t module_size = 0;
+    {
+        // Read DOS header
+        uint16_t dos_magic = 0;
+        if (!self->GetEngine()->ReadBytes(module_base, &dos_magic, sizeof(dos_magic)) || dos_magic != 0x5A4D) {
+            lua_pushnil(L);
+            lua_pushliteral(L, "find_pattern: not a valid PE (no MZ)");
+            return 2;
+        }
+        uint32_t e_lfanew = 0;
+        if (!self->GetEngine()->ReadBytes(module_base + 0x3C, &e_lfanew, sizeof(e_lfanew)) || e_lfanew < 0x80) {
+            lua_pushnil(L);
+            lua_pushliteral(L, "find_pattern: invalid e_lfanew");
+            return 2;
+        }
+        uint32_t pe_sig = 0;
+        if (!self->GetEngine()->ReadBytes(module_base + e_lfanew, &pe_sig, sizeof(pe_sig)) || pe_sig != 0x00004550) {
+            lua_pushnil(L);
+            lua_pushliteral(L, "find_pattern: not a valid PE (no PE signature)");
+            return 2;
+        }
+        // Optional header starts at e_lfanew + 24 (PE sig 4 + COFF 20)
+        uintptr_t opt_hdr = module_base + e_lfanew + 24;
+        uint16_t magic = 0;
+        if (!self->GetEngine()->ReadBytes(opt_hdr, &magic, sizeof(magic))) {
+            lua_pushnil(L);
+            lua_pushliteral(L, "find_pattern: cannot read optional header magic");
+            return 2;
+        }
+        if (magic == 0x20B) {  // PE32+
+            // SizeOfImage is at offset 80 in PE32+ optional header
+            if (!self->GetEngine()->ReadBytes(opt_hdr + 80, &module_size, sizeof(module_size))) {
+                module_size = 0;
+            }
+        } else if (magic == 0x10B) {  // PE32
+            uint32_t size32 = 0;
+            // SizeOfImage is at offset 60 in PE32 optional header
+            if (self->GetEngine()->ReadBytes(opt_hdr + 60, &size32, sizeof(size32))) {
+                module_size = size32;
+            }
+        }
+    }
+
+    if (module_size == 0) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "find_pattern: could not determine module size");
+        return 2;
+    }
+
+    // Scan in chunks
+    constexpr size_t kChunk = 0x4000;  // 16KB chunks
+    std::vector<uint8_t> buf(kChunk + plen);
+    uintptr_t found = 0;
+
+    for (uintptr_t off = 0; off + plen <= module_size && !found; off += kChunk) {
+        size_t chunk_size = std::min<size_t>(kChunk, module_size - off);
+        size_t read_size = chunk_size + plen;
+        if (read_size > buf.size()) buf.resize(read_size);
+        if (!self->GetEngine()->ReadBytes(module_base + off, buf.data(), read_size)) continue;
+
+        for (size_t i = 0; i + plen <= chunk_size && !found; ++i) {
+            bool match = true;
+            for (size_t j = 0; j < plen; ++j) {
+                if (!pat_wild[j] && buf[i + j] != pat_bytes[j]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                found = module_base + off + i;
+            }
+        }
+    }
+
+    if (found) {
+        lua_pushinteger(L, static_cast<lua_Integer>(found));
+        return 1;
+    }
     lua_pushnil(L);
-    lua_pushliteral(L, "find_pattern not yet implemented");
+    lua_pushliteral(L, "pattern not found");
+    return 2;
+}
+
+int wf_get_module(lua_State* L) {
+    // wf.get_module(module_name) -> base_address or nil
+    // e.g. wf.get_module("dxgi.dll")
+    auto* self = g_script_engine;
+    if (!self || !lua_isstring(L, 1)) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "get_module: expected string module_name");
+        return 2;
+    }
+
+    std::string name = lua_tostring(L, 1);
+
+    HANDLE process = GetCurrentProcess();
+    HMODULE modules[1024] = {};
+    DWORD needed = 0;
+    if (!EnumProcessModules(process, modules, sizeof(modules), &needed)) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "get_module: EnumProcessModules failed");
+        return 2;
+    }
+    DWORD count = std::min<DWORD>(needed / sizeof(HMODULE), std::size(modules));
+    for (DWORD i = 0; i < count; ++i) {
+        wchar_t mod_name[MAX_PATH] = {};
+        if (GetModuleBaseNameW(process, modules[i], mod_name, std::size(mod_name)) == 0) continue;
+        std::wstring wname(mod_name);
+        // Compare case-insensitively
+        std::wstring wtarget = Utf8ToWide(name);
+        bool match = false;
+        if (wname.size() >= wtarget.size()) {
+            std::wstring suffix = wname.substr(wname.size() - wtarget.size());
+            // case-insensitive compare
+            bool eq = true;
+            for (size_t k = 0; k < wtarget.size(); ++k) {
+                wchar_t a = towlower(suffix[k]);
+                wchar_t b = towlower(wtarget[k]);
+                if (a != b) { eq = false; break; }
+            }
+            match = eq;
+        }
+        if (match) {
+            lua_pushinteger(L, static_cast<lua_Integer>(reinterpret_cast<uintptr_t>(modules[i])));
+            return 1;
+        }
+    }
+
+    lua_pushnil(L);
+    lua_pushliteral(L, "module not found");
     return 2;
 }
 
@@ -309,6 +492,7 @@ void RegisterWfModule(ScriptEngine* self, lua_State* L) {
         {"unhook",         wf_unhook},
         {"on_unload",      wf_on_unload},
         {"find_pattern",   wf_find_pattern},
+        {"get_module",     wf_get_module},
         {"msgbox",         wf_msgbox},
         {"protect",        wf_protect},
         {nullptr, nullptr}
@@ -340,22 +524,26 @@ void RegisterWfModule(ScriptEngine* self, lua_State* L) {
 extern "C" void ScriptHookStub();
 extern "C" void ScriptHookDispatch(LuaHookContext* ctx);
 
-// We generate the per-hook thunk in C++ instead of separate ASM.
-// Thunk layout (22 bytes):
-//   48 B9 [hook_id:8]      mov rcx, hook_id
-//   48 B8 [dispatcher:8]   mov rax, dispatcher
-//   FF E0                  jmp rax
+// Thunk layout (24 bytes):
+//   mov [rsp-8], rax       (save original game RAX)
+//   mov rax, hook_id       (store hook ID in RAX temporarily)
+//   xchg [rsp-8], rax      (swap: RAX restored to original game RAX! [rsp-8] has hook_id)
+//   push hook_id / jump    
+// Better & standard:
+//   mov [rsp-18h], r10     (save scratch register r10)
+//   mov r10, hook_id       (put hook_id in r10)
+//   jmp dispatcher         (in dispatcher, save rcx, rdx, etc. and read hook_id from r10!)
 
 void WriteThunk(uint8_t* buf, uintptr_t hook_id, uintptr_t dispatcher) {
-    // mov rcx, imm64  -> bytes 0..9
-    buf[0] = 0x48;
-    buf[1] = 0xB9;
+    // 49 BA [hook_id:8]      mov r10, imm64
+    buf[0] = 0x49;
+    buf[1] = 0xBA;
     std::memcpy(buf + 2, &hook_id, sizeof(hook_id));
-    // mov rax, imm64  -> bytes 10..19
+    // 48 B8 [dispatcher:8]   mov rax, imm64
     buf[10] = 0x48;
     buf[11] = 0xB8;
     std::memcpy(buf + 12, &dispatcher, sizeof(dispatcher));
-    // jmp rax         -> bytes 20..21
+    // FF E0                  jmp rax
     buf[20] = 0xFF;
     buf[21] = 0xE0;
 }
@@ -389,13 +577,9 @@ bool ScriptEngine::Initialize(LiveEngine* engine, const std::wstring& game_dir) 
     luaL_openlibs(reinterpret_cast<lua_State*>(lua_state_));
     RegisterWfModule(this, reinterpret_cast<lua_State*>(lua_state_));
 
-    // Load scripts from custom_hooks/
-    std::wstring hooks_dir = GetCustomHooksDir();
-    if (!LoadScriptsFromFolder(hooks_dir)) {
-        status_ = L"Scripts loaded (some may have errors)";
-    } else {
-        status_ = L"Scripts loaded";
-    }
+    // Do NOT automatically run scripts on startup — let the user choose
+    // which scripts to activate via the Script Manager UI checkboxes.
+    status_ = L"Script engine ready";
 
     return true;
 }
@@ -415,6 +599,22 @@ void ScriptEngine::Shutdown() {
 }
 
 std::wstring ScriptEngine::GetCustomHooksDir() const {
+    if (!custom_scripts_dir_.empty()) {
+        return custom_scripts_dir_;
+    }
+    if (GetFileAttributesW(L"D:\\game\\warframe_menu\\WF_MAXON\\scripts") != INVALID_FILE_ATTRIBUTES) {
+        return L"D:\\game\\warframe_menu\\WF_MAXON\\scripts";
+    }
+    wchar_t exe_path[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    wchar_t* last_slash = wcsrchr(exe_path, L'\\');
+    if (last_slash) {
+        *last_slash = L'\0';
+        std::wstring cand1 = std::wstring(exe_path) + L"\\scripts";
+        if (GetFileAttributesW(cand1.c_str()) != INVALID_FILE_ATTRIBUTES) return cand1;
+        std::wstring cand2 = std::wstring(exe_path) + L"\\..\\scripts";
+        if (GetFileAttributesW(cand2.c_str()) != INVALID_FILE_ATTRIBUTES) return cand2;
+    }
     if (!game_dir_.empty()) {
         return game_dir_ + L"\\custom_hooks";
     }
@@ -422,6 +622,10 @@ std::wstring ScriptEngine::GetCustomHooksDir() const {
     wchar_t temp[MAX_PATH]{};
     GetTempPathW(static_cast<DWORD>(std::size(temp)), temp);
     return std::wstring(temp) + L"WF_MAXON_custom_hooks";
+}
+
+void ScriptEngine::SetCustomHooksDir(const std::wstring& dir) {
+    custom_scripts_dir_ = dir;
 }
 
 bool ScriptEngine::LoadScriptsFromFolder(const std::wstring& folder) {
@@ -531,7 +735,14 @@ void ScriptEngine::UninstallAllHooks() {
 int ScriptEngine::InstallHook(uintptr_t address, int lua_ref) {
     if (!address || !engine_ || !engine_->Warbase()) return 0;
 
-    // Allocate thunk (22 bytes) + trampoline.
+    // Direct entry-point hook:
+    // When hooking a function from Lua (e.g. wf.hook(target_addr, cb)),
+    // we MUST hook at the requested entry address (offset 0), NOT at a random guessed offset!
+    constexpr size_t kPatchLen = 14;
+
+    uintptr_t hook_addr = address;
+
+    // Allocate thunk (24 bytes) + trampoline.
     uint8_t* thunk = static_cast<uint8_t*>(VirtualAlloc(
         nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
     if (!thunk) return 0;
@@ -545,39 +756,54 @@ int ScriptEngine::InstallHook(uintptr_t address, int lua_ref) {
 
     int hook_id = next_hook_id_.fetch_add(1);
 
-    // Write thunk: mov rcx, hook_id; jmp ScriptHookStub
+    // Save the original kPatchLen bytes of the target.
+    uint8_t original_bytes[kPatchLen]{};
+    if (!engine_->ReadBytes(hook_addr, original_bytes, kPatchLen)) {
+        VirtualFree(trampoline, 0, MEM_RELEASE);
+        VirtualFree(thunk, 0, MEM_RELEASE);
+        return 0;
+    }
+
+    // Write thunk: mov r10, hook_id; jmp ScriptHookStub
     WriteThunk(thunk, static_cast<uintptr_t>(hook_id),
                reinterpret_cast<uintptr_t>(&ScriptHookStub));
 
-    // Write trampoline: original prologue + jump to address+patch_len
-    // We don't know the patch length here; the caller will fill it.
-    // For now, just zero it. The actual patch length is determined by the
-    // prologue comparison in the install function.
-    std::memset(trampoline, 0x90, 12);
-    WriteAbsoluteJump(trampoline, address + 12); // placeholder, will be corrected
+    // Write trampoline: copy original bytes, then jump back to hook_addr + kPatchLen.
+    std::memcpy(trampoline, original_bytes, kPatchLen);
+    WriteAbsoluteJump(trampoline + kPatchLen, hook_addr + kPatchLen);
+    FlushInstructionCache(GetCurrentProcess(), trampoline, kPatchLen + 12);
 
     // Patch the target: jump to thunk.
-    unsigned char patch[12]{};
-    std::memset(patch, 0x90, sizeof(patch));
+    unsigned char patch[kPatchLen]{};
+    std::memset(patch, 0x90, kPatchLen);
     WriteAbsoluteJump(patch, reinterpret_cast<uintptr_t>(thunk));
 
     DWORD old_protect = 0;
-    if (!VirtualProtect(reinterpret_cast<LPVOID>(address), 12,
+    if (!VirtualProtect(reinterpret_cast<LPVOID>(hook_addr), kPatchLen,
                         PAGE_EXECUTE_READWRITE, &old_protect)) {
         VirtualFree(trampoline, 0, MEM_RELEASE);
         VirtualFree(thunk, 0, MEM_RELEASE);
         return 0;
     }
 
-    std::memcpy(reinterpret_cast<void*>(address), patch, sizeof(patch));
+    __try {
+        std::memcpy(reinterpret_cast<void*>(hook_addr), patch, sizeof(patch));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        VirtualProtect(reinterpret_cast<LPVOID>(hook_addr), kPatchLen, old_protect, &old_protect);
+        VirtualFree(trampoline, 0, MEM_RELEASE);
+        VirtualFree(thunk, 0, MEM_RELEASE);
+        return 0;
+    }
     FlushInstructionCache(GetCurrentProcess(),
-                          reinterpret_cast<LPCVOID>(address), sizeof(patch));
-    VirtualProtect(reinterpret_cast<LPVOID>(address), 12, old_protect, &old_protect);
+                          reinterpret_cast<LPCVOID>(hook_addr), sizeof(patch));
+    VirtualProtect(reinterpret_cast<LPVOID>(hook_addr), kPatchLen, old_protect, &old_protect);
 
     LuaHook hook{};
-    hook.target = address;
+    hook.target = hook_addr;
     hook.trampoline = reinterpret_cast<uintptr_t>(trampoline);
     hook.thunk = reinterpret_cast<uintptr_t>(thunk);
+    std::memcpy(hook.original_bytes, original_bytes, kPatchLen);
+    hook.patch_len = kPatchLen;
     hook.lua_ref = lua_ref;
     hook.id = hook_id;
     hook.active = true;
@@ -591,14 +817,19 @@ bool ScriptEngine::UninstallHook(int hook_id) {
         auto& hook = hooks_[i];
         if (hook.id != hook_id || !hook.active) continue;
 
-        // Restore original bytes (we'd need to save them; for now just nop).
+        // Restore real original bytes, not NOPs!
         DWORD old_protect = 0;
-        VirtualProtect(reinterpret_cast<LPVOID>(hook.target), 12,
-                       PAGE_EXECUTE_READWRITE, &old_protect);
-        std::memset(reinterpret_cast<void*>(hook.target), 0x90, 12);
-        FlushInstructionCache(GetCurrentProcess(),
-                              reinterpret_cast<LPCVOID>(hook.target), 12);
-        VirtualProtect(reinterpret_cast<LPVOID>(hook.target), 12, old_protect, &old_protect);
+        if (VirtualProtect(reinterpret_cast<LPVOID>(hook.target), hook.patch_len,
+                           PAGE_EXECUTE_READWRITE, &old_protect)) {
+            __try {
+                std::memcpy(reinterpret_cast<void*>(hook.target), hook.original_bytes, hook.patch_len);
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                // Fall through - page may not be writable
+            }
+            FlushInstructionCache(GetCurrentProcess(),
+                                  reinterpret_cast<LPCVOID>(hook.target), hook.patch_len);
+            VirtualProtect(reinterpret_cast<LPVOID>(hook.target), hook.patch_len, old_protect, &old_protect);
+        }
 
         CleanupHook(hook);
         hooks_.erase(hooks_.begin() + static_cast<ptrdiff_t>(i));
@@ -642,6 +873,11 @@ void ScriptEngine::DispatchHook(int hook_id, LuaHookContext* ctx) {
         }
     }
     if (!hook || hook->lua_ref == -1) return;
+
+    // Set the trampoline pointer into ctx so ScriptHookStub can jump through it!
+    ctx->trampoline = hook->trampoline;
+
+    InterlockedIncrement(&hook->fire_count);
 
     std::lock_guard<std::mutex> lock(self->lua_mutex_);
     if (!self->lua_state_) return;
@@ -689,6 +925,8 @@ void ScriptEngine::DispatchHook(int hook_id, LuaHookContext* ctx) {
     lua_setfield(L, -2, "r15");
     lua_pushinteger(L, static_cast<lua_Integer>(ctx->rsp));
     lua_setfield(L, -2, "rsp");
+    lua_pushinteger(L, static_cast<lua_Integer>(ctx->skip));
+    lua_setfield(L, -2, "skip");
 
     // XMM registers as doubles (low 64 bits).
     for (int i = 0; i < 16; ++i) {
@@ -711,12 +949,24 @@ void ScriptEngine::DispatchHook(int hook_id, LuaHookContext* ctx) {
         lua_pop(L, 1);
     }
 
-    // Read skip flag from context.
-    ctx->skip = ctx->skip ? 1 : 0;
+    // Read skip flag from Lua context (table at -2 before cleanup).
+    int skip_read = 0;
+    lua_getfield(L, -2, "skip");  // push skip value from ctx table
+    if (lua_isnumber(L, -1)) skip_read = (int)lua_tointeger(L, -1);
+    lua_pop(L, 1);                 // pop skip value back
+    ctx->skip = skip_read ? 1 : 0;
 
     hook->fire_count = InterlockedIncrement(&hook->fire_count);
 
     lua_pop(L, 2); // ctx table + function reference
+}
+
+static int SafeLuaPCall(lua_State* L) {
+    __try {
+        return lua_pcall(L, 0, LUA_MULTRET, 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -999;
+    }
 }
 
 bool ScriptEngine::ExecuteScript(const std::string& code, std::string* error_out) {
@@ -730,9 +980,18 @@ bool ScriptEngine::ExecuteScript(const std::string& code, std::string* error_out
 
     int rc = luaL_loadbuffer(L, code.c_str(), code.size(), "user_script");
     if (rc == LUA_OK) {
-        lua_sethook(L, HookInstructionCountHook, LUA_MASKCOUNT, ScriptEngine::kHookInstructionLimit);
-        rc = lua_pcall(L, 0, LUA_MULTRET, 0);
+        // High instruction limit (5,000,000) for user scripts so loops/scans don't trip
+        lua_sethook(L, HookInstructionCountHook, LUA_MASKCOUNT, 5000000);
+        rc = SafeLuaPCall(L);
         lua_sethook(L, nullptr, 0, 0);
+    }
+
+    if (rc == -999) {
+        std::string err_str = "Native hardware exception caught during execution";
+        if (error_out) *error_out = err_str;
+        AppendScriptLog("[script] ERROR: Native hardware exception\n");
+        lua_settop(L, top);
+        return false;
     }
 
     if (rc == LUA_OK) {
@@ -749,6 +1008,84 @@ bool ScriptEngine::ExecuteScript(const std::string& code, std::string* error_out
         lua_settop(L, top);
         return false;
     }
+}
+
+bool ScriptEngine::ExecuteScriptFile(const std::wstring& path, std::string* error_out) {
+    std::lock_guard<std::mutex> lock(lua_mutex_);
+    if (!lua_state_) {
+        if (error_out) *error_out = "Lua state not initialized";
+        return false;
+    }
+    lua_State* L = reinterpret_cast<lua_State*>(lua_state_);
+    int top = lua_gettop(L);
+
+    std::string utf8_path = WideToUtf8(path);
+    int rc = luaL_loadfile(L, utf8_path.c_str());
+    if (rc == LUA_OK) {
+        lua_sethook(L, HookInstructionCountHook, LUA_MASKCOUNT, 5000000);
+        rc = SafeLuaPCall(L);
+        lua_sethook(L, nullptr, 0, 0);
+    }
+
+    if (rc == -999) {
+        std::string err_str = "Native hardware exception caught during execution";
+        if (error_out) *error_out = err_str;
+        char log[512]{};
+        sprintf_s(log, "[script] ERROR in %s: %s\n", utf8_path.c_str(), err_str.c_str());
+        AppendScriptLog(log);
+        lua_settop(L, top);
+        return false;
+    }
+
+    if (rc == LUA_OK) {
+        char log[512]{};
+        sprintf_s(log, "[script] Loaded %s successfully\n", utf8_path.c_str());
+        AppendScriptLog(log);
+        lua_settop(L, top);
+        return true;
+    } else {
+        const char* err = lua_tostring(L, -1);
+        std::string err_str = err ? err : "Unknown error";
+        if (error_out) *error_out = err_str;
+        char log[512]{};
+        sprintf_s(log, "[script] ERROR in %s: %s\n", utf8_path.c_str(), err_str.c_str());
+        AppendScriptLog(log);
+        lua_settop(L, top);
+        return false;
+    }
+}
+
+void ScriptEngine::ResetEnvironment() {
+    std::lock_guard<std::mutex> lock(lua_mutex_);
+    if (!lua_state_) return;
+    lua_State* L = reinterpret_cast<lua_State*>(lua_state_);
+
+    // 1. Call on_unload callbacks.
+    lua_getglobal(L, "_wf_on_unload_list");
+    if (!lua_isnil(L, -1)) {
+        size_t n = lua_rawlen(L, -1);
+        for (size_t i = 1; i <= n; ++i) {
+            lua_rawgeti(L, -1, static_cast<int>(i));
+            if (lua_isfunction(L, -1)) {
+                lua_pcall(L, 0, 0, 0);
+            } else {
+                lua_pop(L, 1);
+            }
+        }
+    }
+    lua_pop(L, 1);
+
+    // Clear on_unload table
+    lua_pushnil(L);
+    lua_setglobal(L, "_wf_on_unload_list");
+
+    // 2. Uninstall all memory hooks.
+    UninstallAllHooks();
+
+    // 3. Re-register wf module.
+    RegisterWfModule(this, L);
+
+    AppendScriptLog("[script] Environment reset: hooks cleared and on_unload completed\n");
 }
 
 void ScriptEngine::ClearLog() {
@@ -819,5 +1156,5 @@ extern "C" void ScriptHookStub();
 
 extern "C" void ScriptHookDispatch(wfmaxon::LuaHookContext* ctx) {
     if (!ctx) return;
-    wfmaxon::ScriptEngine::DispatchHook(static_cast<int>(ctx->rcx), ctx);
+    wfmaxon::ScriptEngine::DispatchHook(static_cast<int>(ctx->r10), ctx);
 }

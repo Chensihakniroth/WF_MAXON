@@ -52,8 +52,13 @@ public:
     bool ReloadScripts();
     bool LoadScriptsFromFolder(const std::wstring& folder);
     bool ExecuteScript(const std::string& code, std::string* error_out = nullptr);
+    bool ExecuteScriptFile(const std::wstring& path, std::string* error_out = nullptr);
+    void ResetEnvironment();
     void ClearLog();
     void UninstallAllHooks();
+
+    std::wstring GetCustomHooksDir() const;
+    void SetCustomHooksDir(const std::wstring& dir);
 
     const std::wstring& Status() const { return status_; }
     int HookCount() const { return static_cast<int>(hooks_.size()); }
@@ -78,6 +83,8 @@ private:
         uintptr_t target = 0;
         uintptr_t trampoline = 0;
         uintptr_t thunk = 0;
+        uint8_t original_bytes[32]{};
+        size_t patch_len = 0;
         int lua_ref = -1;       // registry reference to the callback
         int id = -1;
         bool active = false;
@@ -88,11 +95,9 @@ private:
     // implementation; the Lua state is only handled as an opaque pointer here.
     void CleanupHook(LuaHook& hook);
 
-    // Script paths.
-    std::wstring GetCustomHooksDir() const;
-
     LiveEngine* engine_ = nullptr;
     std::wstring game_dir_;
+    std::wstring custom_scripts_dir_;
     std::wstring status_;
 
     // Lua state (protected by mutex).
