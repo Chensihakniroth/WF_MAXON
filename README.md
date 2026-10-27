@@ -134,30 +134,6 @@ Or set:
 WF_MAXON_GAME_DIR=D:\Your\Warframe\Directory
 ```
 
-## Refreshing offsets after a Warframe update
-
-Do not edit an RVA inside `OwHelper.dll` by hand. The payload now keeps the current-build manifest in `src\generated\warframe_offsets.h` and refreshes it from unique byte signatures:
-
-```bat
-cd /d D:\game\warframe_menu\WF_MAXON
-refresh_offsets.bat
-build.bat
-```
-
-`refresh_offsets.bat` scans the installed `Warframe.x64.exe`, records its SHA-256/PE identity, writes a timestamped report under `WF_MAXON\offsets\`, and atomically replaces the generated header only when every required signature has exactly one hit. Zero-hit or multi-hit signatures leave the previous header untouched instead of guessing. `build.bat` runs the same refresh automatically before linking; use `WF_MAXON_WARFRAME_EXE` when the game is installed elsewhere.
-
-The current installed build was scanned successfully: FireWeaponRmi `0xEA5790`, WeaponAmount `0x5E47F0`, DamageResult `0x167E9A2`, DamageAccumulate `0x167E8A0`, FOV setter `0x137D170`, FOV getter `0x1437A00`, and view-FOV getter `0x6C7D60` (RVAs, not file offsets). `DamageResult` is anchored by the unique RDX-backed clamp sequence and derives its short-branch destination from the generated patch bytes, so the OneHitKill context hook no longer depends on the old 471-hit arithmetic signature.
-
-For an offline build that deliberately reuses the last generated manifest:
-
-```bat
-set WF_MAXON_SKIP_OFFSET_REFRESH=1
-build.bat
-```
-
-Do not use that override after a game update unless the generated header's binary hash still matches the executable you are testing.
-
-
 ```bat
 python D:\game\warframe_menu\_dump_offsets\_warframe_offset_dumper.py ^
   --binary "D:\SteamLibrary\steamapps\common\Warframe\Warframe.x64.exe" ^
